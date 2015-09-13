@@ -5,24 +5,30 @@ using System.IO;
 
 using Cloo;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 
 
 namespace NQueens
-{
-	public struct QueenInit
-	{
-		public char blah; // TODO
-	}
-
-	public struct QueenResult
-	{
-		public long count;
-	}
-
+{		
 	class MainClass
 	{
-		public const int NumQueens = 8;
+		public const int NumQueens = 13;
 		public const int Spread = 44;
+
+		[StructLayoutAttribute(LayoutKind.Sequential, Pack = 1)]
+		unsafe struct QueenState
+		{
+			public fixed long masks[NumQueens];
+			public long solutions; // Number of solutinos found so far.
+			public byte step;
+			public byte col;
+			public byte startCol; // First column in which this individual computation was tasked with filling.
+			public long mask;
+			public long rext;
+			public long rook;
+			public long add;
+			public long sub;
+		}
 
 		public static void Main (string[] args)
 		{
@@ -35,15 +41,18 @@ namespace NQueens
 			var properties = new ComputeContextPropertyList (platform);
 			var context = new ComputeContext(platform.Devices, properties, null, IntPtr.Zero);
 		
-			var init = new QueenInit[Spread];
-			var initBuffer = new ComputeBuffer<QueenInit>(context, 
-				                                          ComputeMemoryFlags.ReadOnly | ComputeMemoryFlags.CopyHostPointer, 
-				                                          init);
+			PrintContextDetails(context);
 
-			var results = new QueenResult[Spread];
-			var resultsBuffer = new ComputeBuffer<QueenResult>(context, 
-				                                               ComputeMemoryFlags.WriteOnly, 
-			                                                   results.Length);
+			var init = new QueenState[Spread];
+
+			for (int i = 0 ; i < init.Length; i++) 
+			{
+				init[i].mask = (1 << NumQueens) - 1;
+			}
+
+			var initBuffer = new ComputeBuffer<QueenState>(context,  
+			                                               ComputeMemoryFlags.ReadWrite | ComputeMemoryFlags.CopyHostPointer, 
+				                                           init);
 
 			string queenKernelSource = GetQueenKernelSource();
 			var program = new ComputeProgram(context, queenKernelSource);
@@ -67,15 +76,11 @@ namespace NQueens
 			catch 
 			{
 				string log = program.GetBuildLog(platform.Devices[0]);
-
-
 				Console.WriteLine (log);
 			}
-				
+
 
 			kernel.SetMemoryArgument(0, initBuffer);
-			kernel.SetMemoryArgument(1, resultsBuffer);
-
 
 			ComputeEventList eventList = new ComputeEventList();
 
@@ -84,15 +89,18 @@ namespace NQueens
 
 			var commands = new ComputeCommandQueue(context, context.Devices[0], ComputeCommandQueueFlags.None);
 			commands.Execute(kernel, null, new long[] { Spread }, null, eventList);
-			commands.ReadFromBuffer(resultsBuffer, ref results, false, eventList);
+			commands.ReadFromBuffer(initBuffer, ref init, false, eventList);
 			commands.Finish();
 
 			sw.Stop();
 
 			Console.WriteLine(sw.ElapsedMilliseconds / 1000.0);
 
-			foreach (var r in results) {
-				Console.WriteLine(r.count);
+			int n = 0;
+			foreach (var r in init) {
+				Console.Write (n + ": ");
+				Console.WriteLine(r.solutions);
+				n++;
 			}
 		}
 
@@ -101,11 +109,18 @@ namespace NQueens
 			var assembly = Assembly.GetExecutingAssembly();
 			var resourceName = "NQueens.queen_kernel.c";
 
+			string code = "";
 			using (var stream = assembly.GetManifestResourceStream (resourceName))
 			using (var reader = new StreamReader(stream)) 
 			{
-				return reader.ReadToEnd();
+				code = reader.ReadToEnd();
 			}
+
+			// Turn off GCC mode by removing #define
+			code = code.Replace("#define GCC_STYLE", "");
+			code = "#define NUM_QUEENS " + NumQueens + "\n" + code;
+
+			return code;
 		}
 
 		public static void PrintContextDetails(ComputeContext context)
