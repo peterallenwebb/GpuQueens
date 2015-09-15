@@ -1,20 +1,22 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.IO;
 
 using Cloo;
-using System.Diagnostics;
-using System.Runtime.InteropServices;
-
 
 namespace NQueens
 {		
 	class MainClass
 	{
-		public const int NumQueens = 13;
+		public const int NumQueens = 14;
 		public const int Spread = 44;
 
+		// Usint "pack" layout ensures there are no memory gaps between
+		// the struct members. We use the same strategy for the corresponding
+		// OpenCL struct, preventing alignment issues.
 		[StructLayoutAttribute(LayoutKind.Sequential, Pack = 1)]
 		unsafe struct QueenState
 		{
@@ -24,7 +26,6 @@ namespace NQueens
 			public byte col;
 			public byte startCol; // First column in which this individual computation was tasked with filling.
 			public long mask;
-			public long rext;
 			public long rook;
 			public long add;
 			public long sub;
