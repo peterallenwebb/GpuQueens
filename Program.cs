@@ -1,9 +1,10 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
-using System.IO;
 
 using Cloo;
 
@@ -11,18 +12,28 @@ namespace NQueens
 {		
 	class MainClass
 	{
-		public const int NumQueens = 14;
-		public const int Spread = 44;
+		public const int NumQueens = 15;
+		public const int Spread = 2048;
 
-		// Usint "pack" layout ensures there are no memory gaps between
-		// the struct members. We use the same strategy for the corresponding
-		// OpenCL struct, preventing alignment issues.
+		public enum Step : byte { Place = 0, Remove = 1, Done = 2 }
+
+		/// <summary>
+		/// This struct matches the one used in the OpenCL C code, and represents
+		/// a unit of work to be carried out in searching the solutinon tree.
+		/// It also includes information about the portion of the computation
+		/// that has already been carried out.
+		/// 
+		/// Using "pack" layout ensures there are no memory gaps between
+		/// the struct members. We use the same strategy for the corresponding
+		/// OpenCL struct, preventing alignment issues.
+		/// </summary>
 		[StructLayoutAttribute(LayoutKind.Sequential, Pack = 1)]
-		unsafe struct QueenState
+		unsafe struct QueenTask
 		{
+			public int id;
 			public fixed long masks[NumQueens];
-			public long solutions; // Number of solutinos found so far.
-			public byte step;
+			public ulong solutions; // Number of solutinos found so far.
+			public Step step;
 			public byte col;
 			public byte startCol; // First column in which this individual computation was tasked with filling.
 			public long mask;
@@ -31,31 +42,80 @@ namespace NQueens
 			public long sub;
 		}
 
-		public static void Main (string[] args)
+		public static void Main(string[] args)
 		{
-			var platforms = ComputePlatform.Platforms;
-
-			if (platforms.Count > 1) 
-				Console.WriteLine("More than one platform available, maybe branch out...");
-
-			var platform = platforms[0];
-			var properties = new ComputeContextPropertyList (platform);
-			var context = new ComputeContext(platform.Devices, properties, null, IntPtr.Zero);
+			ComputeContext context = GetContext();
 		
 			PrintContextDetails(context);
+				
+			ComputeProgram program = GetBuiltProgram(context);
 
-			var init = new QueenState[Spread];
+			ComputeKernel kernel = GetKernel(program);
 
-			for (int i = 0 ; i < init.Length; i++) 
+			ConductSearch(context, kernel);
+		}
+
+		private static void ConductSearch(ComputeContext context, ComputeKernel kernel)
+		{
+			var todos = GetQueenTaskPartition(NumQueens, 4);
+			var done = new List<QueenTask>();
+
+			ComputeEventList eventList = new ComputeEventList();
+
+			var commands = new ComputeCommandQueue(context, context.Devices[1], ComputeCommandQueueFlags.None);
+
+			Console.WriteLine("Starting {0} tasks, and working {1} at a time.", todos.Count, Spread);
+
+			QueenTask[] inProgress = GetNextAssignment(new QueenTask[] {}, todos, done);
+
+			var sw = new Stopwatch();
+			sw.Start();
+
+			while (inProgress.Any())
 			{
-				init[i].mask = (1 << NumQueens) - 1;
+				var taskBuffer = 
+					new ComputeBuffer<QueenTask>(context,  
+						ComputeMemoryFlags.ReadWrite | ComputeMemoryFlags.CopyHostPointer, 
+						inProgress);
+
+				kernel.SetMemoryArgument(0, taskBuffer);
+				commands.WriteToBuffer(inProgress, taskBuffer, false, null);
+
+				for (int i = 0; i < 12; i++)
+					commands.Execute(kernel, null, new long[] { inProgress.Length }, null, eventList);
+
+				commands.ReadFromBuffer(taskBuffer, ref inProgress, false, eventList);
+				commands.Finish();
+
+				inProgress = GetNextAssignment(inProgress, todos, done);
 			}
 
-			var initBuffer = new ComputeBuffer<QueenState>(context,  
-			                                               ComputeMemoryFlags.ReadWrite | ComputeMemoryFlags.CopyHostPointer, 
-				                                           init);
+			sw.Stop();
 
+			Console.WriteLine(sw.ElapsedMilliseconds / 1000.0);
+
+			ulong sum = done.Select(state => state.solutions)
+				            .Aggregate((total, next) => total + next);
+
+			Console.WriteLine("Q({0})={1}", NumQueens, sum);
+		}
+
+		private static ComputeContext GetContext()
+		{
+			if (ComputePlatform.Platforms.Count > 1) 
+				Console.WriteLine("More than one platform available, maybe branch out...");
+
+			var platform = ComputePlatform.Platforms[0];
+			var properties = new ComputeContextPropertyList(platform);
+			var context = new ComputeContext(platform.Devices, properties, null, IntPtr.Zero);
+
+			return context;
+		}
+
+		private static ComputeProgram GetBuiltProgram(ComputeContext context)
+		{
 			string queenKernelSource = GetQueenKernelSource();
+
 			var program = new ComputeProgram(context, queenKernelSource);
 
 			try 
@@ -64,48 +124,51 @@ namespace NQueens
 			}
 			catch 
 			{
-				string log = program.GetBuildLog(platform.Devices[0]);
-				Console.WriteLine (log);
+				string log = program.GetBuildLog(context.Platform.Devices[0]);
+				Console.WriteLine(log);
+				throw;
 			}
 
-			ComputeKernel kernel = null;
+			return program;
+		}
 
+		private static ComputeKernel GetKernel(ComputeProgram program)
+		{
 			try 
 			{
-				kernel = program.CreateKernel("place");
+				return program.CreateKernel("place");
 			}
 			catch 
 			{
-				string log = program.GetBuildLog(platform.Devices[0]);
-				Console.WriteLine (log);
-			}
-
-
-			kernel.SetMemoryArgument(0, initBuffer);
-
-			ComputeEventList eventList = new ComputeEventList();
-
-			var sw = new Stopwatch();
-			sw.Start();
-
-			var commands = new ComputeCommandQueue(context, context.Devices[0], ComputeCommandQueueFlags.None);
-			commands.Execute(kernel, null, new long[] { Spread }, null, eventList);
-			commands.ReadFromBuffer(initBuffer, ref init, false, eventList);
-			commands.Finish();
-
-			sw.Stop();
-
-			Console.WriteLine(sw.ElapsedMilliseconds / 1000.0);
-
-			int n = 0;
-			foreach (var r in init) {
-				Console.Write (n + ": ");
-				Console.WriteLine(r.solutions);
-				n++;
+				string log = program.GetBuildLog(program.Context.Platform.Devices[0]);
+				Console.WriteLine(log);
+				throw;
 			}
 		}
 
-		public static string GetQueenKernelSource()
+		private static QueenTask[] GetNextAssignment(QueenTask[] inProgress, Queue<QueenTask> todos, IList<QueenTask> done)
+		{
+			var nextAssignment = new List<QueenTask>();
+
+			foreach (var task in inProgress) 
+			{
+				if (task.step == Step.Done) 
+				{
+					done.Add(task);
+				} 
+				else
+				{
+					nextAssignment.Add(task);
+				}
+			}
+
+			while (nextAssignment.Count < Spread && todos.Any())
+				nextAssignment.Add(todos.Dequeue());
+
+			return nextAssignment.ToArray();
+		}
+
+		private static string GetQueenKernelSource()
 		{
 			var assembly = Assembly.GetExecutingAssembly();
 			var resourceName = "NQueens.queen_kernel.c";
@@ -124,7 +187,7 @@ namespace NQueens
 			return code;
 		}
 
-		public static void PrintContextDetails(ComputeContext context)
+		private static void PrintContextDetails(ComputeContext context)
 		{
 			Console.WriteLine("[HOST]");
 			Console.WriteLine(Environment.OSVersion);
@@ -162,6 +225,67 @@ namespace NQueens
 				foreach (string extension in device.Extensions)
 					Console.WriteLine("\t + " + extension);
 			}
+		}
+
+		// For an instnace of the N-Queens problem of size n, get a list of QueenTask
+		// tasks that covers the entire problem. That is, when each task is complete
+		// the number of solutions found by each task can be summed to determine the
+		// total number of solutions.
+		private static Queue<QueenTask> GetQueenTaskPartition(int numQueens, int splitDepth)
+		{
+			var wholeProblemTask = new QueenTask();
+			wholeProblemTask.mask = (1 << numQueens) - 1;
+
+			var taskQueue = new Queue<QueenTask>();
+
+			SplitTask(wholeProblemTask, numQueens, splitDepth, taskQueue);
+
+			return taskQueue;
+		}
+
+		private static void SplitTask(QueenTask baseTask, int numQueens, int levels, Queue<QueenTask> taskQueue)
+		{
+			// Base case for recursion.
+			if (levels == 1)
+			{
+				baseTask.id = taskQueue.Count;
+				taskQueue.Enqueue(baseTask);
+				return;
+			}
+
+			for (int i = 0; i < numQueens; i++) 
+			{
+				long queen = 1 << i;
+
+				var subTask = baseTask;
+				subTask.id = 0; // Will be set later.
+				// No need to set masks[] as it is scratch for the task code.
+				subTask.solutions = 0;
+				subTask.step = Step.Place;
+				subTask.col = (byte)(baseTask.col + 1);
+				subTask.startCol = (byte)(baseTask.col + 1);
+				subTask.rook = subTask.rook | queen;
+				subTask.add |= queen << baseTask.col;
+				subTask.sub |= queen << (numQueens - 1 - baseTask.col);
+				subTask.mask = ((1 << numQueens) - 1) & ~(subTask.rook | (subTask.add >> subTask.col) | (subTask.sub >> ((NumQueens - 1) - subTask.col)));
+
+				if (Pop(subTask.rook) == subTask.col &&
+					Pop(subTask.add) == subTask.col &&
+					Pop(subTask.sub) == subTask.col)
+				{
+					SplitTask(subTask, numQueens, levels - 1, taskQueue);
+				}
+			}
+		}
+
+		private static byte Pop(long input)
+		{
+			byte count;
+
+			for (count = 0; input != 0; count++)
+				input &= input - 1;
+
+			return count;
 		}
 	}
 }

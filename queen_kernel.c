@@ -17,17 +17,17 @@
   #define NUM_QUEENS 14
 #else
   // Declarations appropriate to this program being compiled as an OpenCL
-  // kernel. OpenCL has a 65 bit long and requires special keywords to designate
-  // where and how different objectes are stored in memory.
+  // kernel. OpenCL has a 64 bit long and requires special keywords to designate
+  // where and how different objects are stored in memory.
   typedef long qint;
   typedef long int64_t;
+  typedef ulong uint64_t;
+  typedef ushort uint16_t;
   #define CL_KERNEL_KEYWORD __kernel
   #define CL_GLOBAL_KEYWORD __global
   #define CL_CONSTANT_KEYWORD __constant
   #define CL_PACKED_KEYWORD  __attribute__ ((packed))
 #endif
-
-CL_CONSTANT_KEYWORD const int q = NUM_QUEENS;
 
 #define PLACE  0
 #define REMOVE 1
@@ -36,8 +36,9 @@ CL_CONSTANT_KEYWORD const int q = NUM_QUEENS;
 // State of individual computation
 struct CL_PACKED_KEYWORD queenState
 {
-  qint masks[q];
-  int64_t solutions; // Number of solutinos found so far.
+  int id;
+  qint masks[NUM_QUEENS];
+  uint64_t solutions; // Number of solutinos found so far.
   char step;
   char col;
   char startCol; // First column this individual computation was tasked with filling.
@@ -47,28 +48,29 @@ struct CL_PACKED_KEYWORD queenState
   qint sub;
 };
 
-CL_CONSTANT_KEYWORD const qint dodge = (1 << q) - 1;
+CL_CONSTANT_KEYWORD const qint dodge = (1 << NUM_QUEENS) - 1;
 
 CL_KERNEL_KEYWORD void place(CL_GLOBAL_KEYWORD struct queenState * state)
 {
   int index = get_global_id(0);
 
-  qint masks[q];
-  for (int i = 0; i < q; i++)
+  qint masks[NUM_QUEENS];
+  for (int i = 0; i < NUM_QUEENS; i++)
     masks[i] = state[index].masks[i];
 
-  int64_t solutions = state[index].solutions;
-  int step     = state[index].step;
-  int col      = state[index].col;
-  int startCol = state[index].startCol;
-  qint mask    = state[index].mask;
-  qint rook    = state[index].rook;
-  qint add     = state[index].add;
-  qint sub     = state[index].sub;
+  uint64_t solutions = state[index].solutions;
+  int step      = state[index].step;
+  int col       = state[index].col;
+  int startCol  = state[index].startCol;
+  qint mask     = state[index].mask;
+  qint rook     = state[index].rook;
+  qint add      = state[index].add;
+  qint sub      = state[index].sub;
 
-  while (1)
+  uint16_t i = 1;
+  while (i != 0)
   {
-    qint rext;
+  	i++;
 
     if (step == REMOVE)
     {
@@ -82,19 +84,19 @@ CL_KERNEL_KEYWORD void place(CL_GLOBAL_KEYWORD struct queenState * state)
       mask = masks[col];
     }
 
-    rext = mask & -mask;
+    qint rext = mask & -mask;
     rook ^= rext;
     add  ^= rext << col;
-    sub  ^= rext << (q - 1 - col);
+    sub  ^= rext << (NUM_QUEENS - 1 - col);
 
     if (step == PLACE)
     {
       masks[col] = mask;
       ++col;
 
-      if (col != q)
+      if (col != NUM_QUEENS)
       {
-        mask = dodge & ~(rook | (add >> col) | (sub >> ((q - 1) - col)));
+        mask = dodge & ~(rook | (add >> col) | (sub >> ((NUM_QUEENS - 1) - col)));
 
         if (mask == 0)
           step = REMOVE;
@@ -126,7 +128,7 @@ CL_KERNEL_KEYWORD void place(CL_GLOBAL_KEYWORD struct queenState * state)
   state[index].sub       = sub;
   state[index].solutions = solutions;
 
-  for (int i = 0; i < q; i++)
+  for (int i = 0; i < NUM_QUEENS; i++)
     state[index].masks[i] = masks[i];
 }
 
