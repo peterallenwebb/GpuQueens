@@ -1,9 +1,8 @@
-﻿// With GCC_STYLE defined, this program will compile with gcc, which facilitates
-// testing and experimentation. Without it defined, it compiles as an OpenCL
-// shader.
-#define GCC_STYLE
+﻿// Without OPENCL_STYLE defined, this program will compile with gcc/clang, 
+// which facilitates testing and experimentation. Without it defined, it 
+// compiles as an OpenCL shader.
 
-#ifdef GCC_STYLE
+#ifndef OPENCL_STYLE
   // Declarations appropriate to this program being compiled with gcc.
   #include "stdio.h"
   #include "stdint.h"

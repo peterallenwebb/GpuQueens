@@ -12,8 +12,8 @@ namespace NQueens
 {		
 	class MainClass
 	{
-		public const int NumQueens = 15;
-		public const int Spread = 2048;
+		public const int NumQueens = 13;
+		public const int Spread = 1024;
 
 		public enum Step : byte { Place = 0, Remove = 1, Done = 2 }
 
@@ -180,9 +180,10 @@ namespace NQueens
 				code = reader.ReadToEnd();
 			}
 
-			// Turn off GCC mode by removing #define
-			code = code.Replace("#define GCC_STYLE", "");
-			code = "#define NUM_QUEENS " + NumQueens + "\n" + code;
+			// Turn off GCC mode by adding OPENCL_STYLE #define
+			code = "#define OPENCL_STYLE\n" +
+				   "#define NUM_QUEENS " + NumQueens + "\n" + 
+				   code;
 
 			return code;
 		}
