@@ -8,9 +8,7 @@ const int32_t spread = 1024;
 
 typedef int64_t qint;
 
-#define PLACE  0
-#define REMOVE 1
-#define DONE   2
+enum { Place, Remove, Done };
 
 struct queenState
 {
@@ -64,7 +62,7 @@ void get_queens_code(char ** buffer)
 int all_tasks_done(struct queenState * tasks, size_t num_tasks)
 {
   for (int i = 0; i < num_tasks; i++)
-    if (tasks[i].step == DONE)
+    if (tasks[i].step == Done)
       return 1;
 
   return 0;
@@ -166,6 +164,8 @@ int main()
 
   while (!all_tasks_done(inProgress, spread))
   {
+    printf("loop\n");
+    
     cl_mem buffer =
       clCreateBuffer(context, CL_MEM_READ_WRITE, sizeof(inProgress), NULL, &status);
 

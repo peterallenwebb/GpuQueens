@@ -1,5 +1,5 @@
-﻿// Without OPENCL_STYLE defined, this program will compile with gcc/clang, 
-// which facilitates testing and experimentation. Without it defined, it 
+﻿// Without OPENCL_STYLE defined, this program will compile with gcc/clang,
+// which facilitates testing and experimentation. Without it defined, it
 // compiles as an OpenCL shader.
 
 #ifndef OPENCL_STYLE
@@ -28,9 +28,7 @@
   #define CL_PACKED_KEYWORD  __attribute__ ((packed))
 #endif
 
-#define PLACE  0
-#define REMOVE 1
-#define DONE   2
+enum { PLACE, REMOVE, DONE };
 
 // State of individual computation
 struct CL_PACKED_KEYWORD queenState
@@ -58,7 +56,7 @@ CL_KERNEL_KEYWORD void place(CL_GLOBAL_KEYWORD struct queenState * state)
     masks[i] = state[index].masks[i];
 
   uint64_t solutions = state[index].solutions;
-  int step      = state[index].step;
+  char step      = state[index].step;
   int col       = state[index].col;
   int startCol  = state[index].startCol;
   qint mask     = state[index].mask;
